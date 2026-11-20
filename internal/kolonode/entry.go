@@ -25,7 +25,7 @@ type entry struct {
 func (e entry) String() string { return net.JoinHostPort(e.host, strconv.Itoa(int(e.port))) }
 
 // errIPv6 is the error for an IPv6 address in the config, IPv4-mapped forms included.
-var errIPv6 = errors.New("an IPv6 address is refused: kolo-node v0.1.x is IPv4 only")
+var errIPv6 = errors.New("an IPv6 address is refused: kolo-node is IPv4 only")
 
 // parseEntry parses "host:port" with an IPv4 literal or a DNS name, and a port from 1 to 65535.
 func parseEntry(s string) (entry, error) {

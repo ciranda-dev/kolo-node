@@ -61,8 +61,8 @@ Every option of `kolo-node run` and `kolo-node check`, with its default, its ran
 | `check` addresses | at most 16 | fixed | Same cap as `-bootstrap` |
 
 A `-dht-` flag left at 0 takes kolo-dht's default (the values above, from
-kolo-dht v0.1.3), and kolo-dht checks the ranges. `Config.Server` is
-always true. kolo-node v0.1.x is IPv4 only and IPv6 input is refused: an
+kolo-dht), and kolo-dht checks the ranges. `Config.Server` is
+always true. kolo-node is IPv4 only and IPv6 input is refused: an
 IPv6 address in `-listen`, `-bootstrap` or `check`, IPv4-mapped forms
 included, is a config error (exit 2), and names resolve to IPv4 addresses
 only.

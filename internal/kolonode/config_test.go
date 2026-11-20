@@ -281,7 +281,7 @@ func TestRefusesIPv6(t *testing.T) {
 		_, err := parseRun(args, io.Discard)
 		var ue usageError
 		if !errors.As(err, &ue) || !strings.Contains(err.Error(), "IPv6") || !strings.Contains(err.Error(), "IPv4 only") {
-			t.Errorf("%v: %v, want a usage error saying IPv6 is refused and v0.1.x is IPv4 only", args, err)
+			t.Errorf("%v: %v, want a usage error saying IPv6 is refused and kolo-node is IPv4 only", args, err)
 		}
 	}
 	for _, listen := range []string{":7447", "127.0.0.1:0", "0.0.0.0:7447", "localhost:7447"} {

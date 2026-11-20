@@ -239,7 +239,7 @@ process at once.
   and 16 connections, one stream and 64 KiB windows.
 - The key file is created with `SaveNew` only after the socket is open, so
   a config or listen error leaves nothing on disk; an existing file is
-  never replaced. kolo-dht v0.1.x derives a server's DHT ID from its IP and
+  never replaced. kolo-dht derives a server's DHT ID from its IP and
   a random choice made at each start, and its PINGs are not authenticated,
   so the stable key identifies the operator's node but no peer checks it.
 - Config file in JSON with the standard library, decoded strictly token by
@@ -252,7 +252,7 @@ process at once.
   the scope of the listen address (kolo-dht's rule for addresses learned
   from other nodes), so whoever controls the name cannot point the node
   into a private network; literal addresses are used as configured.
-- IPv4 only, like kolo-dht v0.1.x.
+- IPv4 only, like kolo-dht.
 - Logs are events, not traces: their number does not grow with traffic, so
   a flood cannot fill the disk. Bootstrap peers' addresses are cut to the
   /24 that kolo-dht's limits group them by.

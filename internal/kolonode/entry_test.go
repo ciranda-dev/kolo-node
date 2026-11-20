@@ -74,7 +74,7 @@ func TestParseEntryRefusesIPv6(t *testing.T) {
 	for _, in := range []string{"[2001:db8::1]:7447", "[::ffff:203.0.113.10]:7447", "[::1]:7447", "[::]:7447", "[64:ff9b::cb00:710a]:7447", "::ffff:203.0.113.10:7447", "::1:7447"} {
 		_, err := parseEntry(in)
 		if err == nil || !strings.Contains(err.Error(), "IPv6") || !strings.Contains(err.Error(), "IPv4 only") {
-			t.Errorf("parseEntry(%q) = %v, want an error saying IPv6 is refused and v0.1.x is IPv4 only", in, err)
+			t.Errorf("parseEntry(%q) = %v, want an error saying IPv6 is refused and kolo-node is IPv4 only", in, err)
 		}
 	}
 }
