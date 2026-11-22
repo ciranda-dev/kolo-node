@@ -7,6 +7,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Changed
+
+- Breaking: with `-allow-file`, unlisted keys can no longer connect through the relay. `relay -allow-file` now sets kolo-relay's `AllowConnect` as well as `AllowReserve`, so only the listed keys may reserve and only the listed keys may connect; another key that asks to reach a listed key gets the answer of a key with no reservation (`kolorelay.ErrUnavailable`). Without `-allow-file` the relay is still open and logs the `open relay` warning; list the keys that must reach a member through the relay.
+
 ### Added
 
 - `relay`: the listener the `-relay-max-conns`, `-relay-max-conns-per-ip`, window and congestion flags build offers QUIC datagrams, as kolo-relay's default listener does, so clients that opt in (`Transport.Datagrams` in kolo-relay's `Config.Relay`) carry relayed packets as datagrams; the relay offers them, clients use them only when they ask.
