@@ -40,7 +40,8 @@ Every option of `kolo-node run` and `kolo-node check`, with its default, its ran
 | receive windows of that listener | 64 KiB per stream and per connection | fixed | Measured: about 176 heap bytes per unread byte with 1-byte frames (kolo-transport README), so the worst case is 16 × (2 × 1 × 64 KiB × 96 + 64 KiB × 176), about 368 MiB; the memory sum is under Running on a VPS |
 | `relay -listen` | none, required | IPv4 `host:port` | No port is assigned to kolo-relay; the operator picks one |
 | `relay -identity` | required | as `run -identity`; a key file of its own | Not a limit |
-| `relay -allow-file` | none: an open relay, logged as a `WARN` at start | text file of at most 64 KiB, one hex key per line, at least one key | Bounds what a wrong path can make the relay read, as `-bootstrap-file` |
+| `relay -allow-file` | none: required unless `-open` | text file of at most 64 KiB, one hex key per line, at least one key | Bounds what a wrong path can make the relay read, as `-bootstrap-file` |
+| `relay -open` | off | true or false; not with `-allow-file` | Not a limit: the relay exits with code 2 without `-allow-file` or `-open`, and `-open` logs the `WARN` event `open relay` at start |
 | `-relay-max-reservations` | 64 | 1 to 100000 | kolo-relay `MaxReservations`; its default and range |
 | `-relay-max-sessions` | 16 | 1 to 10000 | kolo-relay `MaxSessions` |
 | `-relay-max-sessions-per-peer` | 4, or `-relay-max-sessions` if lower | 1 to `-relay-max-sessions` | kolo-relay `MaxSessionsPerPeer` |

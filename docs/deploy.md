@@ -111,8 +111,8 @@ Install the unit `deploy/kolo-node.service` as
 ```ini
 # This unit runs `kolo-node run`, a kolo-dht bootstrap node.
 # To run `kolo-node relay` instead, change ExecStart and give it its own key file and UDP port.
-# A relay without -allow-file is OPEN: anyone may reserve and use its bandwidth. It logs the
-# warning "open relay" at start; pass -allow-file with the keys that may reserve; any key may still connect to a listed key through it.
+# A relay needs -allow-file, the keys that may reserve and connect, or -open, an open relay any key may use at
+# your cost; with neither it exits with code 2. -open logs the warning "open relay" at start.
 [Unit]
 Description=Kolo DHT bootstrap node
 Documentation=https://github.com/ciranda-dev/kolo-node
