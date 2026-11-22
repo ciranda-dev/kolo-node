@@ -35,7 +35,7 @@ const (
 	relayWindowDefault     = "; 0 means %d, kolo-relay's listener default, and each byte costs about 176 bytes of heap per connection"
 	allowFileWhat          = "-allow-file"
 	openRelayWarning       = "open relay"
-	openRelayWarningReason = "ANYONE may reserve and use this relay's bandwidth, and 16 addresses fill the default 64 reservations; pass -allow-file to allow only listed keys"
+	openRelayWarningReason = "ANYONE may reserve and use this relay's bandwidth (-open), and 16 addresses fill the default 64 reservations; pass -allow-file instead to allow only listed keys"
 )
 
 // relayOptions holds the settings of the relay command.
@@ -44,6 +44,7 @@ type relayOptions struct {
 	listen    string
 	identity  string
 	allowFile string
+	open      bool
 	logFormat string
 	logLevel  string
 
@@ -64,7 +65,8 @@ func relayFlags(o *relayOptions, out io.Writer) *flag.FlagSet {
 	fs.StringVar(&o.config, "config", "", "JSON config `file`; flags set on the command line override it")
 	fs.StringVar(&o.listen, "listen", "", "IPv4 UDP `address` to listen on (required)")
 	fs.StringVar(&o.identity, "identity", "", "key `file` of the relay, created on the first run (required)")
-	fs.StringVar(&o.allowFile, "allow-file", "", "`file` of the hex keys that may reserve, one per line; without it any key may")
+	fs.StringVar(&o.allowFile, "allow-file", "", "`file` of the hex keys that may reserve and connect, one per line; required unless -open is given")
+	fs.BoolVar(&o.open, "open", false, "run an open relay: any key may reserve and connect, at the operator's cost; required when -allow-file is not given")
 	fs.StringVar(&o.logFormat, "log-format", "text", "log `format`: text or json")
 	fs.StringVar(&o.logLevel, "log-level", "info", "log `level`: info, warn or error")
 	s := &o.srv
@@ -150,6 +152,12 @@ func (o *relayOptions) validate() error {
 	if conns, _ := o.conns(); int64(conns+relayMaxDialed)*conn > relayMaxMemory {
 		return errors.New("kolonode: -relay-max-conns and -relay-conn-window need more receive window than kolo-transport's 64 GiB limit")
 	}
+	switch {
+	case o.open && o.allowFile != "":
+		return errors.New("kolonode: -open and -allow-file cannot be used together")
+	case !o.open && o.allowFile == "":
+		return errors.New("kolonode: -allow-file is required; pass -open instead to let any key reserve and connect")
+	}
 	return nil
 }
 
@@ -227,9 +235,10 @@ func (o *relayOptions) serverConfig() *kolorelay.ServerConfig {
 	}
 	if o.allowed != nil {
 		allowed := o.allowed
-		c.AllowReserve = func(k ed25519.PublicKey) bool {
+		listed := func(k ed25519.PublicKey) bool {
 			return len(k) == ed25519.PublicKeySize && allowed[[ed25519.PublicKeySize]byte(k)]
 		}
+		c.AllowReserve = listed
 	}
 	return &c
 }
@@ -328,7 +337,7 @@ func relayCmd(ctx context.Context, args []string, env Env) int {
 	}
 	log.Info("identity", "key", id.PublicKeyString(), "created", created)
 	log.Info("started", append([]any{"version", version(), "addr", srv.Addr().String()}, o.limitAttrs()...)...)
-	if o.allowed == nil {
+	if o.open {
 		log.Warn(openRelayWarning, "reason", openRelayWarningReason)
 	} else {
 		log.Info("allow", "keys", len(o.allowed))

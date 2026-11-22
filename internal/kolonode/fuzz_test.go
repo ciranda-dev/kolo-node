@@ -116,6 +116,7 @@ func FuzzRelayConfig(f *testing.F) {
 	f.Add([]byte(`{"relay-rate-bytes": 1e3}`))
 	f.Add([]byte(`{"relay-stream-window": 1048576, "relay-conn-window": 4194304, "relay-congestion": "bbr"}`))
 	f.Add([]byte(`{"allow-file": null}`))
+	f.Add([]byte(`{"open": true}`))
 	f.Fuzz(func(t *testing.T, b []byte) {
 		var o relayOptions
 		decodeConfig(relayFlags(&o, io.Discard), b)

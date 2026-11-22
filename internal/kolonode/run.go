@@ -75,7 +75,7 @@ type Env struct {
 
 const usage = `usage:
   kolo-node run -identity FILE [flags]       run a kolo-dht bootstrap server
-  kolo-node relay -identity FILE -listen ADDR [flags]
+  kolo-node relay -identity FILE -listen ADDR (-allow-file FILE | -open) [flags]
                                              run a kolo-relay server
   kolo-node check [-timeout 5s] [-relay HOST:PORT@KEY] [-relay-file FILE] [HOST:PORT...]
                                              check that kolo-dht servers and kolo-relays answer from here

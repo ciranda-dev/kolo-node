@@ -22,7 +22,7 @@ import (
 )
 
 func TestRelayFlags(t *testing.T) {
-	p := writeConfig(t, `{"listen": "127.0.0.1:0", "identity": "/k", "relay-max-sessions": 3, "relay-max-session-bytes": 1099511627776, "relay-reservation-lifetime": "2h"}`)
+	p := writeConfig(t, `{"listen": "127.0.0.1:0", "identity": "/k", "open": true, "relay-max-sessions": 3, "relay-max-session-bytes": 1099511627776, "relay-reservation-lifetime": "2h"}`)
 	o, err := parseRelay([]string{"-config", p,
 		"-relay-max-reservations", "100", "-relay-max-sessions", "40", "-relay-max-sessions-per-peer", "5",
 		"-relay-max-sessions-per-target", "6", "-relay-max-session-duration", "3h", "-relay-session-idle-timeout", "2m",
@@ -45,22 +45,22 @@ func TestRelayFlags(t *testing.T) {
 		tc.MaxMemory != kolotransport.DefaultMaxMemory || !tc.Datagrams {
 		t.Fatalf("listener %+v", tc)
 	}
-	o, _ = parseRelay([]string{"-listen", "127.0.0.1:0", "-identity", "/k", "-relay-max-conns", "10000"}, io.Discard)
+	o, _ = parseRelay([]string{"-listen", "127.0.0.1:0", "-identity", "/k", "-open", "-relay-max-conns", "10000"}, io.Discard)
 	if tc := o.serverConfig().Secure.Transport; tc.MaxMemory != (10000+relayMaxDialed)*relayConnWindow {
 		t.Fatalf("MaxMemory %d for 10000 connections", tc.MaxMemory)
 	}
-	o, err = parseRelay([]string{"-listen", "127.0.0.1:0", "-identity", "/k"}, io.Discard)
+	o, err = parseRelay([]string{"-listen", "127.0.0.1:0", "-identity", "/k", "-open"}, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if c := o.serverConfig(); c.Secure != nil || c.AllowReserve != nil {
 		t.Fatal("defaults set a listener or an allow list")
 	}
-	o, _ = parseRelay([]string{"-listen", "127.0.0.1:0", "-identity", "/k", "-relay-max-conns", "2"}, io.Discard)
+	o, _ = parseRelay([]string{"-listen", "127.0.0.1:0", "-identity", "/k", "-open", "-relay-max-conns", "2"}, io.Discard)
 	if tc := o.serverConfig().Secure.Transport; tc.MaxConns != 2 || tc.MaxConnsPerIP != 2 {
 		t.Fatalf("per-address default above MaxConns: %+v", tc)
 	}
-	o, _ = parseRelay([]string{"-listen", "127.0.0.1:0", "-identity", "/k", "-relay-max-conns-per-ip", "9"}, io.Discard)
+	o, _ = parseRelay([]string{"-listen", "127.0.0.1:0", "-identity", "/k", "-open", "-relay-max-conns-per-ip", "9"}, io.Discard)
 	if tc := o.serverConfig().Secure.Transport; tc.MaxConns != relayMaxConns || tc.MaxConnsPerIP != 9 {
 		t.Fatalf("listener with only the per-address limit: %+v", tc)
 	}
@@ -68,14 +68,15 @@ func TestRelayFlags(t *testing.T) {
 
 func TestRelayUsage(t *testing.T) {
 	for _, args := range [][]string{
-		{"-identity", "/k"},
-		{"-listen", "127.0.0.1:0"},
-		{"-listen", "[::1]:7448", "-identity", "/k"},
-		{"-listen", "[::ffff:127.0.0.1]:7448", "-identity", "/k"},
-		{"-listen", "127.0.0.1:0", "-identity", "/k", "-log-format", "xml"},
-		{"-listen", "127.0.0.1:0", "-identity", "/k", "-relay-max-conns", "-1"},
-		{"-listen", "127.0.0.1:0", "-identity", "/k", "extra"},
-		{"-listen", "127.0.0.1:0", "-identity", "/k", "-nope"},
+		{"-open", "-identity", "/k"},
+		{"-open", "-listen", "127.0.0.1:0"},
+		{"-open", "-listen", "[::1]:7448", "-identity", "/k"},
+		{"-open", "-listen", "[::ffff:127.0.0.1]:7448", "-identity", "/k"},
+		{"-open", "-listen", "127.0.0.1:0", "-identity", "/k", "-log-format", "xml"},
+		{"-open", "-listen", "127.0.0.1:0", "-identity", "/k", "-relay-max-conns", "-1"},
+		{"-open", "-listen", "127.0.0.1:0", "-identity", "/k", "extra"},
+		{"-open", "-listen", "127.0.0.1:0", "-identity", "/k", "-nope"},
+		{"-listen", "127.0.0.1:0", "-identity", "/k"},
 	} {
 		var errOut strings.Builder
 		if code := Main(t.Context(), append([]string{"relay"}, args...), Env{Stdout: io.Discard, Stderr: &errOut}); code != ExitUsage {
@@ -105,7 +106,7 @@ func TestRelayRanges(t *testing.T) {
 	} {
 		key := keyPath(t)
 		var errOut strings.Builder
-		args := append([]string{"relay", "-listen", "127.0.0.1:0", "-identity", key}, bad...)
+		args := append([]string{"relay", "-open", "-listen", "127.0.0.1:0", "-identity", key}, bad...)
 		if code := Main(t.Context(), args, Env{Stdout: io.Discard, Stderr: &errOut}); code != ExitUsage {
 			t.Errorf("%v: exit %d, stderr %q", bad, code, errOut.String())
 		}
@@ -119,7 +120,7 @@ func TestRelayMaxConnsRange(t *testing.T) {
 	for _, n := range []string{"4096", "10000"} {
 		t.Run(n, func(t *testing.T) {
 			checkGoroutines(t)
-			r, addr, key := startRelayCmd(t, "-relay-max-conns", n)
+			r, addr, key := startRelayCmd(t, "-open", "-relay-max-conns", n)
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			res, err := kolorelay.Reserve(ctx, addr, key, newID(t), nil)
@@ -136,7 +137,7 @@ func TestRelayMaxConnsRange(t *testing.T) {
 
 func relayOpts(t *testing.T, args ...string) relayOptions {
 	t.Helper()
-	o, err := parseRelay(append([]string{"-listen", "127.0.0.1:0", "-identity", "/k"}, args...), io.Discard)
+	o, err := parseRelay(append([]string{"-open", "-listen", "127.0.0.1:0", "-identity", "/k"}, args...), io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +186,7 @@ func TestRelayListenerFlags(t *testing.T) {
 }
 
 func TestRelayListenerConfigFile(t *testing.T) {
-	p := writeConfig(t, `{"listen": "127.0.0.1:0", "identity": "/k", "relay-stream-window": 1048576, "relay-conn-window": 4194304, "relay-congestion": "bbr"}`)
+	p := writeConfig(t, `{"listen": "127.0.0.1:0", "identity": "/k", "open": true, "relay-stream-window": 1048576, "relay-conn-window": 4194304, "relay-congestion": "bbr"}`)
 	o, err := parseRelay([]string{"-config", p}, io.Discard)
 	if err != nil {
 		t.Fatal(err)
@@ -228,7 +229,7 @@ func TestRelayListenerRefused(t *testing.T) {
 		{"-relay-congestion", []string{"-relay-congestion", "BBR"}, "BBR"},
 		{"-relay-conn-window", []string{"-relay-max-conns", "10000", "-relay-conn-window", "67108864"}, "67108864"},
 	} {
-		_, err := parseRelay(append([]string{"-listen", "127.0.0.1:0", "-identity", "/k"}, tc.args...), io.Discard)
+		_, err := parseRelay(append([]string{"-open", "-listen", "127.0.0.1:0", "-identity", "/k"}, tc.args...), io.Discard)
 		var ue usageError
 		if !errors.As(err, &ue) {
 			t.Errorf("%v: %v, want a usage error", tc.args, err)
@@ -239,7 +240,7 @@ func TestRelayListenerRefused(t *testing.T) {
 		}
 		var errOut strings.Builder
 		key := keyPath(t)
-		args := append([]string{"relay", "-listen", "127.0.0.1:0", "-identity", key}, tc.args...)
+		args := append([]string{"relay", "-open", "-listen", "127.0.0.1:0", "-identity", key}, tc.args...)
 		if code := Main(t.Context(), args, Env{Stdout: io.Discard, Stderr: &errOut}); code != ExitUsage {
 			t.Errorf("%v: exit %d, stderr %q", tc.args, code, errOut.String())
 		}
@@ -251,7 +252,7 @@ func TestRelayListenerRefused(t *testing.T) {
 
 func TestRelayListenerStarts(t *testing.T) {
 	checkGoroutines(t)
-	r, addr, key := startRelayCmd(t, "-relay-stream-window", "1048576", "-relay-conn-window", "4194304", "-relay-congestion", "bbr")
+	r, addr, key := startRelayCmd(t, "-open", "-relay-stream-window", "1048576", "-relay-conn-window", "4194304", "-relay-congestion", "bbr")
 	ev := r.log.wait(t, "started", nil, 5*time.Second)
 	if ev["relay-stream-window"] != float64(1<<20) || ev["relay-conn-window"] != float64(4<<20) || ev["relay-congestion"] != "bbr" {
 		t.Fatalf("started event %v", ev)
@@ -265,6 +266,74 @@ func TestRelayListenerStarts(t *testing.T) {
 	res.Close()
 	if code := r.stop(t); code != ExitOK {
 		t.Fatalf("exit %d", code)
+	}
+}
+
+const (
+	errNeedAllowOrOpen = "kolonode: -allow-file is required; pass -open instead to let any key reserve and connect"
+	errOpenAndAllow    = "kolonode: -open and -allow-file cannot be used together"
+)
+
+func refusedRelay(t *testing.T, want string, args ...string) {
+	t.Helper()
+	_, err := parseRelay(append([]string{"-listen", "127.0.0.1:0", "-identity", "/k"}, args...), io.Discard)
+	var ue usageError
+	if !errors.As(err, &ue) || err.Error() != want {
+		t.Errorf("%v: %v, want the usage error %q", args, err, want)
+	}
+	key := keyPath(t)
+	var errOut strings.Builder
+	cmd := append([]string{"relay", "-listen", "127.0.0.1:0", "-identity", key}, args...)
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	if code := Main(ctx, cmd, Env{Stdout: io.Discard, Stderr: &errOut}); code != ExitUsage || errOut.String() != want+"\n" {
+		t.Errorf("%v: exit %d, stderr %q", args, code, errOut.String())
+	}
+	if _, err := os.Stat(key); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("%v: a key file was written for a refused config", args)
+	}
+}
+
+func TestRelayNeedsAllowOrOpen(t *testing.T) {
+	refusedRelay(t, errNeedAllowOrOpen)
+	refusedRelay(t, errNeedAllowOrOpen, "-open=false")
+	refusedRelay(t, errNeedAllowOrOpen, "-config", writeConfig(t, `{"open": false}`))
+	refusedRelay(t, errNeedAllowOrOpen, "-config", writeConfig(t, `{"open": true}`), "-open=false")
+	refusedRelay(t, errNeedAllowOrOpen, "-config", writeConfig(t, `{"allow-file": ""}`))
+}
+
+func TestRelayOpenWithAllowFileRefused(t *testing.T) {
+	list := writeConfig(t, hex.EncodeToString(newID(t).PublicKey())+"\n")
+	empty := writeConfig(t, "# none\n")
+	refusedRelay(t, errOpenAndAllow, "-open", "-allow-file", list)
+	refusedRelay(t, errOpenAndAllow, "-allow-file", list, "-open")
+	refusedRelay(t, errOpenAndAllow, "-config", writeConfig(t, `{"open": true}`), "-allow-file", list)
+	refusedRelay(t, errOpenAndAllow, "-config", writeConfig(t, fmt.Sprintf(`{"allow-file": %q}`, list)), "-open")
+	refusedRelay(t, errOpenAndAllow, "-config", writeConfig(t, fmt.Sprintf(`{"open": true, "allow-file": %q}`, list)))
+	refusedRelay(t, errOpenAndAllow, "-open", "-allow-file", empty)
+}
+
+func TestRelayOpenFlag(t *testing.T) {
+	for _, args := range [][]string{
+		{"-open"},
+		{"-open=true"},
+		{"-config", writeConfig(t, `{"open": true}`)},
+		{"-config", writeConfig(t, `{"open": false}`), "-open"},
+	} {
+		o, err := parseRelay(append([]string{"-listen", "127.0.0.1:0", "-identity", "/k"}, args...), io.Discard)
+		if err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+		if c := o.serverConfig(); !o.open || o.allowed != nil || c.AllowReserve != nil || c.AllowConnect != nil {
+			t.Errorf("%v: open %v, allowed %v, config %+v", args, o.open, o.allowed, c)
+		}
+	}
+	for _, bad := range []string{`{"open": "yes"}`, `{"open": 1}`, `{"open": null}`} {
+		_, err := parseRelay([]string{"-listen", "127.0.0.1:0", "-identity", "/k", "-config", writeConfig(t, bad)}, io.Discard)
+		var ue usageError
+		if !errors.As(err, &ue) || !strings.Contains(err.Error(), `key "open"`) {
+			t.Errorf("%s: %v, want a usage error naming the key", bad, err)
+		}
 	}
 }
 
@@ -330,9 +399,9 @@ func startRelayCmd(t *testing.T, args ...string) (*running, string, ed25519.Publ
 
 func TestRelayServes(t *testing.T) {
 	checkGoroutines(t)
-	r, addr, key := startRelayCmd(t)
+	r, addr, key := startRelayCmd(t, "-open")
 	if !r.log.tryWait(openRelayWarning, nil, 5*time.Second) {
-		t.Fatal("no open relay warning without -allow-file")
+		t.Fatal("no open relay warning with -open")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -381,14 +450,14 @@ func TestRelayServes(t *testing.T) {
 	r.log.wait(t, "stopped", nil, 5*time.Second)
 }
 
-// Without -allow-file the relay is open and says so, as a warning, at start; with it, no warning but the allow event.
+// With -open the relay is open and says so, as a warning, at start; with -allow-file, no warning but the allow event.
 func TestRelayOpenWarning(t *testing.T) {
 	checkGoroutines(t)
-	r, _, _ := startRelayCmd(t)
+	r, _, _ := startRelayCmd(t, "-open")
 	ev := r.log.wait(t, openRelayWarning, nil, 5*time.Second)
 	reason, _ := ev["reason"].(string)
-	if ev["level"] != "WARN" || !strings.Contains(reason, "ANYONE") || !strings.Contains(reason, "-allow-file") {
-		t.Fatalf("open relay event %v: want a WARN that says anyone may reserve and names -allow-file", ev)
+	if ev["level"] != "WARN" || !strings.Contains(reason, "ANYONE") || !strings.Contains(reason, "-open") || !strings.Contains(reason, "-allow-file") {
+		t.Fatalf("open relay event %v: want a WARN that says anyone may reserve and names -open and -allow-file", ev)
 	}
 	if r.log.tryWait("allow", nil, 0) {
 		t.Fatal("an open relay logged the allow event")
@@ -422,7 +491,7 @@ func TestRelayIdentityStable(t *testing.T) {
 	path := keyPath(t)
 	var keys []string
 	for range 2 {
-		r := start(t, "relay", "-listen", "127.0.0.1:0", "-identity", path, "-log-format", "json")
+		r := start(t, "relay", "-open", "-listen", "127.0.0.1:0", "-identity", path, "-log-format", "json")
 		ev := r.log.wait(t, "identity", nil, 10*time.Second)
 		keys = append(keys, ev["key"].(string))
 		if code := r.stop(t); code != ExitOK {
