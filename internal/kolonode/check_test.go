@@ -50,18 +50,34 @@ func TestCheck(t *testing.T) {
 	}
 }
 
-func TestCheckUsage(t *testing.T) {
-	many := make([]string, maxEntries+1)
-	for i := range many {
-		many[i] = netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), uint16(i+1)).String()
+func TestCheckManyAddresses(t *testing.T) {
+	checkGoroutines(t)
+	_, addr := startNode(t)
+	names := fakeResolver{}
+	args := []string{"check", "-timeout", "2s"}
+	var want strings.Builder
+	for i := range 17 {
+		name := fmt.Sprintf("n%d.example.org", i)
+		names[name] = []netip.Addr{addr.Addr()}
+		args = append(args, fmt.Sprintf("%s:%d", name, addr.Port()))
+		fmt.Fprintf(&want, "ok %s\n", addr)
 	}
+	old := lookupIP
+	lookupIP = names
+	t.Cleanup(func() { lookupIP = old })
+	var out, errOut strings.Builder
+	if code := Main(t.Context(), args, Env{Stdout: &out, Stderr: &errOut}); code != ExitOK || out.String() != want.String() {
+		t.Fatalf("17 addresses: exit %d, stdout %q, stderr %q", code, out.String(), errOut.String())
+	}
+}
+
+func TestCheckUsage(t *testing.T) {
 	for _, args := range [][]string{
 		{},
 		{"-timeout", "500ms", "127.0.0.1:1"},
 		{"-timeout", "2m", "127.0.0.1:1"},
 		{"bad"},
 		{"-nope", "127.0.0.1:1"},
-		many,
 	} {
 		var out, errOut strings.Builder
 		if code := Main(t.Context(), append([]string{"check"}, args...), Env{Stdout: &out, Stderr: &errOut}); code != ExitUsage || out.Len() != 0 {

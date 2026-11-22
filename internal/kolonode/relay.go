@@ -35,7 +35,7 @@ const (
 	relayWindowDefault     = "; 0 means %d, kolo-relay's listener default, and each byte costs about 176 bytes of heap per connection"
 	allowFileWhat          = "-allow-file"
 	openRelayWarning       = "open relay"
-	openRelayWarningReason = "ANYONE may reserve and use this relay's bandwidth, and 16 addresses fill the default 64 reservations; pass -allow-file to allow only listed keys"
+	openRelayWarningReason = "ANYONE may reserve and use this relay's bandwidth, and 14 addresses fill the default 56 reservations; pass -allow-file to allow only listed keys"
 )
 
 // relayOptions holds the settings of the relay command.

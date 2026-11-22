@@ -18,7 +18,6 @@ import (
 
 const (
 	maxConfigSize  = 64 << 10
-	maxEntries     = 16
 	minStats       = time.Second
 	maxStats       = 24 * time.Hour
 	defaultListen  = ":7447"
@@ -199,23 +198,20 @@ func (o *options) loadNodes() error {
 		return errors.New("kolonode: -first starts a new network, so it takes no -bootstrap or -bootstrap-file")
 	}
 	seen := map[string]bool{}
-	add := func(s string) (bool, error) {
+	add := func(s string) error {
 		e, err := parseEntry(s)
 		if err != nil {
-			return false, err
+			return err
 		}
 		if !seen[e.String()] {
 			seen[e.String()] = true
 			o.nodes = append(o.nodes, e)
 		}
-		return len(o.nodes) > maxEntries, nil
+		return nil
 	}
-	tooMany := fmt.Errorf("kolonode: more than %d bootstrap entries in all", maxEntries)
 	for i, s := range o.bootstrap {
-		if over, err := add(s); err != nil {
+		if err := add(s); err != nil {
 			return fmt.Errorf("kolonode: -bootstrap entry %d: %w", i+1, err)
-		} else if over {
-			return tooMany
 		}
 	}
 	if len(o.bootstrap) > 0 {
@@ -227,10 +223,8 @@ func (o *options) loadNodes() error {
 			return err
 		}
 		err = fileEntries(b, func(line int, s string) error {
-			if over, err := add(s); err != nil {
+			if err := add(s); err != nil {
 				return fmt.Errorf("kolonode: -bootstrap-file %s line %d: %w", p, line, err)
-			} else if over {
-				return tooMany
 			}
 			return nil
 		})
@@ -249,10 +243,8 @@ func (o *options) loadNodes() error {
 	}
 	if !given && !o.first {
 		for i, s := range splitList(os.Getenv(envBootstrap)) {
-			if over, err := add(s); err != nil {
+			if err := add(s); err != nil {
 				return fmt.Errorf("kolonode: %s entry %d: %w", envBootstrap, i+1, err)
-			} else if over {
-				return tooMany
 			}
 		}
 		if len(o.nodes) > 0 {

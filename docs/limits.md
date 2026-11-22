@@ -7,8 +7,8 @@ Every option of `kolo-node run` and `kolo-node check`, with its default, its ran
 | `-config` | none | JSON file of at most 64 KiB, flag only | Bounds what a wrong path (a log, a device) can make the node read |
 | `-listen` | `:7447` | IPv4 `host:port` | Unassigned at IANA, above 1024, below Linux's ephemeral range |
 | `-identity` | required | key file; created on the first run with mode 0600, its directory with 0700 if missing; never replaced | Not a limit |
-| `-bootstrap` | none | comma-separated `host:port` list, repeatable (in the file, an array of strings); with `-bootstrap-file` and `KOLO_BOOTSTRAP`, at most 16 distinct entries in all | Bounds the names resolved at each attempt |
-| `-bootstrap-file` | none | text file of at most 64 KiB, one `host:port` per line, repeatable (in the file, an array of paths) | Bounds what a wrong path can make the node read; 16 entries of the longest form (a 253-byte name, a colon and a 5-digit port) take about 4 KiB, the rest leaves room for comments |
+| `-bootstrap` | none | comma-separated `host:port` list, repeatable (in the file, an array of strings); with `-bootstrap-file` and `KOLO_BOOTSTRAP`, any number of distinct entries | The operator's own list, so it has no count limit. One answer makes the node ping at most 8 addresses per name and 64 in all |
+| `-bootstrap-file` | none | text file of at most 64 KiB, one `host:port` per line, repeatable (in the file, an array of paths) | Bounds what a wrong path can make the node read; about 250 entries of the longest form (a 253-byte name, a colon and a 5-digit port) fit, and comments take the rest |
 | `-first` | false | true: no entry nodes; refused with `-bootstrap` or `-bootstrap-file` | Not a limit |
 | `KOLO_BOOTSTRAP` | unset | as `-bootstrap`; read only when `-bootstrap`, `-bootstrap-file` (even set to an empty list) and `-first` are all unset | Not a limit |
 | `-log-format` | `text` | `text` or `json` | Not a limit |
@@ -41,7 +41,7 @@ Every option of `kolo-node run` and `kolo-node check`, with its default, its ran
 | `relay -listen` | none, required | IPv4 `host:port` | No port is assigned to kolo-relay; the operator picks one |
 | `relay -identity` | required | as `run -identity`; a key file of its own | Not a limit |
 | `relay -allow-file` | none: an open relay, logged as a `WARN` at start | text file of at most 64 KiB, one hex key per line, at least one key | Bounds what a wrong path can make the relay read, as `-bootstrap-file`; the listed keys are the only ones that may reserve and connect |
-| `-relay-max-reservations` | 64 | 1 to 100000 | kolo-relay `MaxReservations`; its default and range |
+| `-relay-max-reservations` | 0: (`-relay-max-conns` - `-relay-max-sessions`) / 2, 56 at the defaults | 1 and up | kolo-relay `MaxReservations`; its default and range. It follows the listener, since a reservation lives on a connection (kolo-relay limits) |
 | `-relay-max-sessions` | 16 | 1 to 10000 | kolo-relay `MaxSessions` |
 | `-relay-max-sessions-per-peer` | 4, or `-relay-max-sessions` if lower | 1 to `-relay-max-sessions` | kolo-relay `MaxSessionsPerPeer` |
 | `-relay-max-sessions-per-target` | 8, or `-relay-max-sessions` if lower | 1 to `-relay-max-sessions` | kolo-relay `MaxSessionsPerTarget` |
@@ -59,9 +59,9 @@ Every option of `kolo-node run` and `kolo-node check`, with its default, its ran
 | `-relay-stream-window` | 64 KiB | 64 KiB to 16 MiB, at most `-relay-conn-window` | The listener's kolo-transport `MaxStreamReceiveWindow`, kolo-relay's listener default and kolo-transport's range; a session moves at most this many bytes per round trip in each direction. Worst case about 176 heap bytes per byte of connection window on every connection (kolo-relay limits) |
 | `-relay-conn-window` | 256 KiB | 64 KiB to 64 MiB | The listener's kolo-transport `MaxConnReceiveWindow`, kolo-relay's listener default and kolo-transport's range; `MaxMemory` follows it as for `-relay-max-conns`, and (`-relay-max-conns` + 1) × the window may not exceed kolo-transport's 64 GiB `MaxMemory` limit |
 | `-relay-congestion` | `reno` | `reno`, `cubic` or `bbr` | The listener's kolo-transport `CongestionControl`; it paces what the relay sends to each client. `bbr` adds up to 5.5 MiB of samples per connection (kolo-transport limits) |
-| `check -relay`, `-relay-file`, `KOLO_RELAYS` | none | at most 16 distinct relays in all; a file of at most 64 KiB | Same cap as `-bootstrap` |
+| `check -relay`, `-relay-file`, `KOLO_RELAYS` | none | any number of distinct relays; a file of at most 64 KiB | Same as `-bootstrap` |
 | `check -timeout` | `5s` per address | 1s to 1m | Each request waits half of it, so a PING always ends before it |
-| `check` addresses | at most 16 | fixed | Same cap as `-bootstrap` |
+| `check` addresses | any number | none | Same as `-bootstrap`; each is checked in turn |
 
 A `-dht-` flag left at 0 takes kolo-dht's default (the values above, from
 kolo-dht), and kolo-dht checks the ranges. `Config.Server` is

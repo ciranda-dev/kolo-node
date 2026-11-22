@@ -3,7 +3,6 @@ package kolonode
 import (
 	"errors"
 	"flag"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -173,11 +172,6 @@ func TestPrecedence(t *testing.T) {
 
 func TestFlagErrors(t *testing.T) {
 	t.Setenv(envBootstrap, "")
-	var list []string
-	for i := range maxEntries + 1 {
-		list = append(list, fmt.Sprintf("n%d.example.org:1", i))
-	}
-	many := strings.Join(list, ",")
 	empty := writeConfig(t, "# no entries yet\n")
 	for _, tc := range []struct {
 		args  []string
@@ -191,8 +185,6 @@ func TestFlagErrors(t *testing.T) {
 		{[]string{"-identity", "/k", "-log-format", "xml"}, true, "-log-format"},
 		{[]string{"-identity", "/k", "-log-level", "debug"}, true, "-log-level"},
 		{[]string{"-identity", "/k", "-stats-interval", "25h"}, true, "-stats-interval"},
-		{[]string{"-identity", "/k", "-bootstrap", many}, true, "more than 16"},
-		{[]string{"-identity", "/k", "-bootstrap", strings.Join(list[:10], ","), "-bootstrap-file", writeConfig(t, strings.Join(list[9:], "\n"))}, true, "more than 16 bootstrap entries in all"},
 		{[]string{"-identity", "/k"}, true, "no entry nodes"},
 		{[]string{"-identity", "/k", "-bootstrap", " , "}, true, "no entry nodes"},
 		{[]string{"-identity", "/k", "-bootstrap-file", empty}, true, "no entry nodes"},
