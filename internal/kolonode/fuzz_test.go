@@ -114,6 +114,7 @@ func FuzzRelayEntry(f *testing.F) {
 func FuzzRelayConfig(f *testing.F) {
 	f.Add([]byte(`{"listen": "127.0.0.1:7448", "identity": "/k", "relay-max-session-bytes": 1099511627776, "relay-flush-interval": "2ms"}`))
 	f.Add([]byte(`{"relay-rate-bytes": 1e3}`))
+	f.Add([]byte(`{"relay-stream-window": 1048576, "relay-conn-window": 4194304, "relay-congestion": "bbr"}`))
 	f.Add([]byte(`{"allow-file": null}`))
 	f.Fuzz(func(t *testing.T, b []byte) {
 		var o relayOptions
