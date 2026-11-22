@@ -9,6 +9,7 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- Breaking: `-relay-max-conns` no longer stops at 10000. Any value of 1 or more is accepted when (`-relay-max-conns` + 1) × the connection window fits kolo-transport's 64 GiB `MaxMemory` limit (262143 connections at 256 KiB); 10001 used to exit with code 2 and now starts the relay. A combination above the limit still exits with code 2, also when the product would overflow. `-relay-max-sessions` keeps kolo-relay's range of 1 to 10000. Needs the kolo-transport release that carries the change.
 - `-relay-max-reservations` keeps its meaning with default 0, which now means kolo-relay's derived default, (`-relay-max-conns` - `-relay-max-sessions`) / 2, 56 at the defaults instead of 64, and any larger value is accepted (kolo-relay's maximum of 100000 is gone). Needs the kolo-relay release that carries the change.
 - `-bootstrap`, `-bootstrap-file`, `KOLO_BOOTSTRAP`, `check` addresses and `check -relay`, `-relay-file` and `KOLO_RELAYS` no longer stop at 16 entries; a list is the operator's own input. A name still yields at most 8 addresses and 64 addresses in all.
 

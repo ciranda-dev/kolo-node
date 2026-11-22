@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"time"
 
 	koloid "github.com/ciranda-dev/kolo-id"
@@ -147,7 +148,7 @@ func (o *relayOptions) validate() error {
 	if stream > conn {
 		return errors.New("kolonode: -relay-conn-window must be at least -relay-stream-window")
 	}
-	if conns, _ := o.conns(); int64(conns+relayMaxDialed)*conn > relayMaxMemory {
+	if conns, _ := o.conns(); receiveMemory(conns, conn) > relayMaxMemory {
 		return errors.New("kolonode: -relay-max-conns and -relay-conn-window need more receive window than kolo-transport's 64 GiB limit")
 	}
 	return nil
@@ -175,6 +176,11 @@ func (o *relayOptions) conns() (conns, perIP int) {
 		perIP = min(relayMaxConnsPerIP, conns)
 	}
 	return conns, perIP
+}
+
+// receiveMemory returns the receive window kolo-transport needs for conns connections and the dialed one; it clamps conns as kolo-transport does so the product cannot overflow.
+func receiveMemory(conns int, window int64) int64 {
+	return (int64(min(conns, math.MaxInt32)) + relayMaxDialed) * window
 }
 
 // loadAllow reads -allow-file under the -bootstrap-file rules: one hex key per line, "#" comments, blank lines
@@ -222,7 +228,7 @@ func (o *relayOptions) serverConfig() *kolorelay.ServerConfig {
 			// kolo-relay's listener offers datagrams; a client that opts in keeps its losses instead of waiting on a stream.
 			Datagrams: true,
 			// kolo-transport refuses less than (MaxConns + MaxDialed) × MaxConnReceiveWindow; kolo-swarm sizes it the same way.
-			MaxMemory: max(kolotransport.DefaultMaxMemory, int64(conns+relayMaxDialed)*conn),
+			MaxMemory: max(kolotransport.DefaultMaxMemory, receiveMemory(conns, conn)),
 		}}
 	}
 	if o.allowed != nil {
