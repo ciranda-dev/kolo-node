@@ -239,6 +239,7 @@ func (o *relayOptions) serverConfig() *kolorelay.ServerConfig {
 			return len(k) == ed25519.PublicKeySize && allowed[[ed25519.PublicKeySize]byte(k)]
 		}
 		c.AllowReserve = listed
+		c.AllowConnect = func(from, _ ed25519.PublicKey) bool { return listed(from) }
 	}
 	return &c
 }

@@ -10,6 +10,7 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 ### Changed
 
 - Breaking: `relay` refuses to start (exit 2) unless it is given `-allow-file` or the new `-open` (config key `open`). `-open` runs a relay that any key may reserve on and connect through, and logs the `open relay` warning as before; the two cannot be used together. Add `-open` to keep a relay that was started without `-allow-file`.
+- Breaking: with `-allow-file`, only the listed keys may connect through the relay, as only they may reserve; another key that asks to reach a listed key gets the answer of a key with no reservation (`kolorelay.ErrUnavailable`).
 
 ### Added
 
