@@ -64,7 +64,7 @@ func relayFlags(o *relayOptions, out io.Writer) *flag.FlagSet {
 	fs.StringVar(&o.config, "config", "", "JSON config `file`; flags set on the command line override it")
 	fs.StringVar(&o.listen, "listen", "", "IPv4 UDP `address` to listen on (required)")
 	fs.StringVar(&o.identity, "identity", "", "key `file` of the relay, created on the first run (required)")
-	fs.StringVar(&o.allowFile, "allow-file", "", "`file` of the hex keys that may reserve, one per line; without it any key may")
+	fs.StringVar(&o.allowFile, "allow-file", "", "`file` of the hex keys that may reserve and connect, one per line; without it the relay is open")
 	fs.StringVar(&o.logFormat, "log-format", "text", "log `format`: text or json")
 	fs.StringVar(&o.logLevel, "log-level", "info", "log `level`: info, warn or error")
 	s := &o.srv
@@ -227,9 +227,12 @@ func (o *relayOptions) serverConfig() *kolorelay.ServerConfig {
 	}
 	if o.allowed != nil {
 		allowed := o.allowed
-		c.AllowReserve = func(k ed25519.PublicKey) bool {
+		listed := func(k ed25519.PublicKey) bool {
 			return len(k) == ed25519.PublicKeySize && allowed[[ed25519.PublicKeySize]byte(k)]
 		}
+		c.AllowReserve = listed
+		// The target needs a reservation, which only a listed key can hold, so only the initiator is tested.
+		c.AllowConnect = func(from, _ ed25519.PublicKey) bool { return listed(from) }
 	}
 	return &c
 }
