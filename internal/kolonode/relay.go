@@ -23,6 +23,7 @@ import (
 const (
 	relayMaxConns          = 128
 	relayMaxConnsPerIP     = 4
+	relayMaxSessions       = 16
 	relayMaxDialed         = 1
 	relayMaxStreams        = 2
 	relayStreamWindow      = 64 << 10
@@ -31,6 +32,7 @@ const (
 	relayMaxStreamWindow   = 16 << 20
 	relayMaxConnWindow     = 64 << 20
 	relayMaxMemory         = 64 << 30
+	relayDatagramQueues    = (128 + 32) * 1536 // kolo-transport counts it per connection when Datagrams is on
 	relayDefault           = "; 0 means the kolo-relay default"
 	relayListenerDefault   = "; 0 means %d, kolo-relay's listener default"
 	relayWindowDefault     = "; 0 means %d, kolo-relay's listener default, and each byte costs about 176 bytes of heap per connection"
@@ -149,7 +151,7 @@ func (o *relayOptions) validate() error {
 		return errors.New("kolonode: -relay-conn-window must be at least -relay-stream-window")
 	}
 	if conns, _ := o.conns(); receiveMemory(conns, conn) > relayMaxMemory {
-		return errors.New("kolonode: -relay-max-conns and -relay-conn-window need more receive window than kolo-transport's 64 GiB limit")
+		return errors.New("kolonode: -relay-max-conns and -relay-conn-window need more memory than kolo-transport's 64 GiB limit")
 	}
 	return nil
 }
@@ -178,9 +180,9 @@ func (o *relayOptions) conns() (conns, perIP int) {
 	return conns, perIP
 }
 
-// receiveMemory returns the receive window kolo-transport needs for conns connections and the dialed one; it clamps conns as kolo-transport does so the product cannot overflow.
+// receiveMemory returns the memory kolo-transport needs for conns connections and the dialed one, each with a connection window and datagram queues; it clamps conns as kolo-transport does so the product cannot overflow.
 func receiveMemory(conns int, window int64) int64 {
-	return (int64(min(conns, math.MaxInt32)) + relayMaxDialed) * window
+	return (int64(min(conns, math.MaxInt32)) + relayMaxDialed) * (window + relayDatagramQueues)
 }
 
 // loadAllow reads -allow-file under the -bootstrap-file rules: one hex key per line, "#" comments, blank lines
@@ -241,6 +243,19 @@ func (o *relayOptions) serverConfig() *kolorelay.ServerConfig {
 		c.AllowConnect = func(from, _ ed25519.PublicKey) bool { return listed(from) }
 	}
 	return &c
+}
+
+// reservations returns the reservation limit kolo-relay runs with: the flag, or the default it derives from the listener and the session limit.
+func (o *relayOptions) reservations() int {
+	if o.srv.MaxReservations != 0 {
+		return o.srv.MaxReservations
+	}
+	conns, _ := o.conns()
+	sessions := o.srv.MaxSessions
+	if sessions == 0 {
+		sessions = max(1, min(relayMaxSessions, conns/4))
+	}
+	return max(1, (conns-sessions)/2)
 }
 
 func (o *relayOptions) limitAttrs() []any {
@@ -336,7 +351,7 @@ func relayCmd(ctx context.Context, args []string, env Env) int {
 		}
 	}
 	log.Info("identity", "key", id.PublicKeyString(), "created", created)
-	log.Info("started", append([]any{"version", version(), "addr", srv.Addr().String()}, o.limitAttrs()...)...)
+	log.Info("started", append([]any{"version", version(), "addr", srv.Addr().String(), "max_reservations", o.reservations()}, o.limitAttrs()...)...)
 	if o.allowed == nil {
 		log.Warn(openRelayWarning, "reason", openRelayWarningReason)
 	} else {
