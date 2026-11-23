@@ -31,8 +31,6 @@ const (
 	relayMinWindow         = 64 << 10 // kolo-transport's smallest window
 	relayMaxStreamWindow   = 16 << 20
 	relayMaxConnWindow     = 64 << 20
-	relayMaxMemory         = 64 << 30
-	relayDatagramQueues    = (128 + 32) * 1536 // kolo-transport counts it per connection when Datagrams is on
 	relayDefault           = "; 0 means the kolo-relay default"
 	relayListenerDefault   = "; 0 means %d, kolo-relay's listener default"
 	relayWindowDefault     = "; 0 means %d, kolo-relay's listener default, and each byte costs about 176 bytes of heap per connection"
@@ -150,8 +148,8 @@ func (o *relayOptions) validate() error {
 	if stream > conn {
 		return errors.New("kolonode: -relay-conn-window must be at least -relay-stream-window")
 	}
-	if conns, _ := o.conns(); receiveMemory(conns, conn) > relayMaxMemory {
-		return errors.New("kolonode: -relay-max-conns and -relay-conn-window need more memory than kolo-transport's 64 GiB limit")
+	if conns, _ := o.conns(); int64(conns) > math.MaxInt64/(conn+kolotransport.DatagramQueueBytes)-relayMaxDialed {
+		return errors.New("kolonode: -relay-max-conns and -relay-conn-window need more memory than an int64 counts")
 	}
 	return nil
 }
@@ -180,9 +178,9 @@ func (o *relayOptions) conns() (conns, perIP int) {
 	return conns, perIP
 }
 
-// receiveMemory returns the memory kolo-transport needs for conns connections and the dialed one, each with a connection window and datagram queues; it clamps conns as kolo-transport does so the product cannot overflow.
+// receiveMemory returns the memory kolo-transport needs for conns connections and the dialed one, each with a connection window and datagram queues; validate keeps it within an int64.
 func receiveMemory(conns int, window int64) int64 {
-	return (int64(min(conns, math.MaxInt32)) + relayMaxDialed) * (window + relayDatagramQueues)
+	return (int64(conns) + relayMaxDialed) * (window + kolotransport.DatagramQueueBytes)
 }
 
 // loadAllow reads -allow-file under the -bootstrap-file rules: one hex key per line, "#" comments, blank lines
