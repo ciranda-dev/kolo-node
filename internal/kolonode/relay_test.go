@@ -48,14 +48,14 @@ func TestRelayFlags(t *testing.T) {
 		t.Fatalf("listener %+v", tc)
 	}
 	o, _ = parseRelay([]string{"-listen", "127.0.0.1:0", "-identity", "/k", "-relay-max-conns", "10000"}, io.Discard)
-	if tc := o.serverConfig().Secure.Transport; tc.MaxMemory != (10000+relayMaxDialed)*relayConnWindow {
+	if tc := o.serverConfig().Secure.Transport; tc.MaxMemory != (10000+relayMaxDialed)*(relayConnWindow+relayDatagramQueues) {
 		t.Fatalf("MaxMemory %d for 10000 connections", tc.MaxMemory)
 	}
 	o, err = parseRelay([]string{"-listen", "127.0.0.1:0", "-identity", "/k", "-relay-max-conns", "100000"}, io.Discard)
 	if err != nil {
 		t.Fatalf("100000 connections: %v", err)
 	}
-	if tc := o.serverConfig().Secure.Transport; tc.MaxConns != 100000 || tc.MaxMemory != (100000+relayMaxDialed)*relayConnWindow {
+	if tc := o.serverConfig().Secure.Transport; tc.MaxConns != 100000 || tc.MaxMemory != (100000+relayMaxDialed)*(relayConnWindow+relayDatagramQueues) {
 		t.Fatalf("listener for 100000 connections: %+v", tc)
 	}
 	o, err = parseRelay([]string{"-listen", "127.0.0.1:0", "-identity", "/k"}, io.Discard)
@@ -130,6 +130,9 @@ func TestRelayRanges(t *testing.T) {
 func TestRelayReservationsFollowMaxConns(t *testing.T) {
 	checkGoroutines(t)
 	r, addr, key := startRelayCmd(t, "-relay-max-conns", "20", "-relay-max-conns-per-ip", "20", "-relay-max-sessions", "4")
+	if ev := r.log.wait(t, "started", nil, 5*time.Second); ev["max_reservations"] != float64(8) {
+		t.Fatalf("started event %v, want max_reservations 8", ev)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	var held []*kolorelay.Reservation
@@ -151,6 +154,28 @@ func TestRelayReservationsFollowMaxConns(t *testing.T) {
 	}
 }
 
+// The started event names the reservation limit that is in force, derived or set, since the derived one is not a flag the operator typed.
+func TestRelayLogsReservations(t *testing.T) {
+	checkGoroutines(t)
+	for _, tc := range []struct {
+		args []string
+		want float64
+	}{
+		{nil, 56},
+		{[]string{"-relay-max-reservations", "5"}, 5},
+		{[]string{"-relay-max-conns", "12"}, 4},
+		{[]string{"-relay-max-conns", "12", "-relay-max-sessions", "10"}, 1},
+	} {
+		r, _, _ := startRelayCmd(t, tc.args...)
+		if ev := r.log.wait(t, "started", nil, 5*time.Second); ev["max_reservations"] != tc.want {
+			t.Errorf("%v: started event %v, want max_reservations %v", tc.args, ev, tc.want)
+		}
+		if code := r.stop(t); code != ExitOK {
+			t.Fatalf("exit %d", code)
+		}
+	}
+}
+
 func TestRelayMaxConnsRange(t *testing.T) {
 	for _, n := range []string{"4096", "10000", "10001", "100000"} {
 		t.Run(n, func(t *testing.T) {
@@ -167,6 +192,19 @@ func TestRelayMaxConnsRange(t *testing.T) {
 				t.Fatalf("exit %d", code)
 			}
 		})
+	}
+}
+
+// kolo-transport counts the datagram queues of every connection in MaxMemory, so the 64 GiB limit holds fewer connections.
+func TestRelayMaxConnsCountsDatagramQueues(t *testing.T) {
+	args := func(n string) []string {
+		return []string{"-listen", "127.0.0.1:0", "-identity", "/k", "-relay-max-conns", n}
+	}
+	if _, err := parseRelay(args("135299"), io.Discard); err != nil {
+		t.Fatalf("135299 connections: %v", err)
+	}
+	if _, err := parseRelay(args("135300"), io.Discard); err == nil {
+		t.Fatal("135300 connections accepted, want the 64 GiB limit")
 	}
 }
 
@@ -206,7 +244,7 @@ func TestRelayListenerFlags(t *testing.T) {
 			if tr.MaxStreamReceiveWindow != tc.stream || tr.MaxConnReceiveWindow != tc.conn || tr.CongestionControl != tc.cc || tr.MaxConns != tc.conns {
 				t.Fatalf("listener %+v", tr)
 			}
-			if want := max(kolotransport.DefaultMaxMemory, int64(tc.conns+relayMaxDialed)*tc.conn); tr.MaxMemory != want {
+			if want := max(kolotransport.DefaultMaxMemory, int64(tc.conns+relayMaxDialed)*(tc.conn+relayDatagramQueues)); tr.MaxMemory != want {
 				t.Fatalf("MaxMemory %d, want %d", tr.MaxMemory, want)
 			}
 			if tr.MaxDialed != relayMaxDialed || tr.MaxIncomingStreams != relayMaxStreams {
