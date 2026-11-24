@@ -17,8 +17,8 @@ import (
 	kolotransport "github.com/ciranda-dev/kolo-transport"
 )
 
-// kolo-relay's listener when ServerConfig.Secure is nil (relaySecure in kolo-relay, unexported). Setting -relay-max-conns or
-// -relay-max-conns-per-ip needs a non-nil Secure, which kolo-relay uses as given, so the command sets all of them.
+// kolo-relay's listener when ServerConfig.Secure is nil (relaySecure in kolo-relay, unexported; datagrams on). Setting -relay-max-conns or
+// -relay-max-conns-per-ip, -relay-stream-window, -relay-conn-window or -relay-congestion needs a non-nil Secure, which kolo-relay uses as given, so the command sets all of them.
 const (
 	relayMaxConns          = 128
 	relayMaxConnsPerIP     = 4
@@ -26,8 +26,13 @@ const (
 	relayMaxStreams        = 2
 	relayStreamWindow      = 64 << 10
 	relayConnWindow        = 256 << 10
+	relayMinWindow         = 64 << 10 // kolo-transport's smallest window
+	relayMaxStreamWindow   = 16 << 20
+	relayMaxConnWindow     = 64 << 20
+	relayMaxMemory         = 64 << 30
 	relayDefault           = "; 0 means the kolo-relay default"
 	relayListenerDefault   = "; 0 means %d, kolo-relay's listener default"
+	relayWindowDefault     = "; 0 means %d, kolo-relay's listener default, and each byte costs about 176 bytes of heap per connection"
 	allowFileWhat          = "-allow-file"
 	openRelayWarning       = "open relay"
 	openRelayWarningReason = "ANYONE may reserve and use this relay's bandwidth, and 16 addresses fill the default 64 reservations; pass -allow-file to allow only listed keys"
@@ -45,6 +50,9 @@ type relayOptions struct {
 	srv           kolorelay.ServerConfig
 	maxConns      int
 	maxConnsPerIP int
+	streamWindow  int64
+	connWindow    int64
+	congestion    string
 
 	allowed map[[ed25519.PublicKeySize]byte]bool // from allowFile, set by loadAllow
 }
@@ -75,6 +83,9 @@ func relayFlags(o *relayOptions, out io.Writer) *flag.FlagSet {
 	fs.DurationVar(&s.FlushInterval, "relay-flush-interval", 0, "kolorelay.ServerConfig.FlushInterval"+relayDefault)
 	fs.IntVar(&o.maxConns, "relay-max-conns", 0, "the listener's kolo-transport MaxConns"+fmt.Sprintf(relayListenerDefault, relayMaxConns))
 	fs.IntVar(&o.maxConnsPerIP, "relay-max-conns-per-ip", 0, "the listener's kolo-transport MaxConnsPerIP"+fmt.Sprintf(relayListenerDefault, relayMaxConnsPerIP))
+	fs.Int64Var(&o.streamWindow, "relay-stream-window", 0, "the listener's kolo-transport MaxStreamReceiveWindow, in bytes, 64 KiB to 16 MiB"+fmt.Sprintf(relayWindowDefault, relayStreamWindow))
+	fs.Int64Var(&o.connWindow, "relay-conn-window", 0, "the listener's kolo-transport MaxConnReceiveWindow, in bytes, 64 KiB to 64 MiB and at least the stream window"+fmt.Sprintf(relayWindowDefault, relayConnWindow))
+	fs.StringVar(&o.congestion, "relay-congestion", "", "the listener's kolo-transport CongestionControl: reno, cubic or bbr; empty means reno, kolo-relay's listener default")
 	return fs
 }
 
@@ -125,8 +136,45 @@ func (o *relayOptions) validate() error {
 		return errors.New("kolonode: -log-level must be info, warn or error")
 	case o.maxConns < 0 || o.maxConnsPerIP < 0:
 		return errors.New("kolonode: -relay-max-conns and -relay-max-conns-per-ip must not be negative")
+	case o.streamWindow != 0 && (o.streamWindow < relayMinWindow || o.streamWindow > relayMaxStreamWindow):
+		return errors.New("kolonode: -relay-stream-window must be 0 or between 64 KiB and 16 MiB")
+	case o.connWindow != 0 && (o.connWindow < relayMinWindow || o.connWindow > relayMaxConnWindow):
+		return errors.New("kolonode: -relay-conn-window must be 0 or between 64 KiB and 64 MiB")
+	case o.congestion != "" && o.congestion != "reno" && o.congestion != "cubic" && o.congestion != "bbr":
+		return errors.New("kolonode: -relay-congestion must be reno, cubic or bbr")
+	}
+	stream, conn := o.windows()
+	if stream > conn {
+		return errors.New("kolonode: -relay-conn-window must be at least -relay-stream-window")
+	}
+	if conns, _ := o.conns(); int64(conns+relayMaxDialed)*conn > relayMaxMemory {
+		return errors.New("kolonode: -relay-max-conns and -relay-conn-window need more receive window than kolo-transport's 64 GiB limit")
 	}
 	return nil
+}
+
+// windows returns the listener's stream and connection windows, with kolo-relay's defaults for 0.
+func (o *relayOptions) windows() (stream, conn int64) {
+	stream, conn = o.streamWindow, o.connWindow
+	if stream == 0 {
+		stream = relayStreamWindow
+	}
+	if conn == 0 {
+		conn = relayConnWindow
+	}
+	return stream, conn
+}
+
+// conns returns the listener's MaxConns and MaxConnsPerIP, with kolo-relay's defaults for 0.
+func (o *relayOptions) conns() (conns, perIP int) {
+	conns, perIP = o.maxConns, o.maxConnsPerIP
+	if conns == 0 {
+		conns = relayMaxConns
+	}
+	if perIP == 0 {
+		perIP = min(relayMaxConnsPerIP, conns)
+	}
+	return conns, perIP
 }
 
 // loadAllow reads -allow-file under the -bootstrap-file rules: one hex key per line, "#" comments, blank lines
@@ -160,24 +208,21 @@ func (o *relayOptions) loadAllow() error {
 // serverConfig returns the kolo-relay config of o; zero fields take kolo-relay's defaults.
 func (o *relayOptions) serverConfig() *kolorelay.ServerConfig {
 	c := o.srv
-	if o.maxConns != 0 || o.maxConnsPerIP != 0 {
-		conns := o.maxConns
-		if conns == 0 {
-			conns = relayMaxConns
-		}
-		perIP := o.maxConnsPerIP
-		if perIP == 0 {
-			perIP = min(relayMaxConnsPerIP, conns)
-		}
+	if o.maxConns != 0 || o.maxConnsPerIP != 0 || o.streamWindow != 0 || o.connWindow != 0 || o.congestion != "" {
+		conns, perIP := o.conns()
+		stream, conn := o.windows()
 		c.Secure = &kolosecure.Config{Transport: &kolotransport.Config{
 			MaxConns:               conns,
 			MaxConnsPerIP:          perIP,
 			MaxDialed:              relayMaxDialed,
 			MaxIncomingStreams:     relayMaxStreams,
-			MaxStreamReceiveWindow: relayStreamWindow,
-			MaxConnReceiveWindow:   relayConnWindow,
+			MaxStreamReceiveWindow: stream,
+			MaxConnReceiveWindow:   conn,
+			CongestionControl:      o.congestion,
+			// kolo-relay's listener offers datagrams; a client that opts in keeps its losses instead of waiting on a stream.
+			Datagrams: true,
 			// kolo-transport refuses less than (MaxConns + MaxDialed) × MaxConnReceiveWindow; kolo-swarm sizes it the same way.
-			MaxMemory: max(kolotransport.DefaultMaxMemory, int64(conns+relayMaxDialed)*relayConnWindow),
+			MaxMemory: max(kolotransport.DefaultMaxMemory, int64(conns+relayMaxDialed)*conn),
 		}}
 	}
 	if o.allowed != nil {
@@ -204,10 +249,15 @@ func (o *relayOptions) limitAttrs() []any {
 		{"relay-rate-burst", o.srv.RateBurst},
 		{"relay-max-conns", int64(o.maxConns)},
 		{"relay-max-conns-per-ip", int64(o.maxConnsPerIP)},
+		{"relay-stream-window", o.streamWindow},
+		{"relay-conn-window", o.connWindow},
 	} {
 		if l.v != 0 {
 			out = append(out, l.name, l.v)
 		}
+	}
+	if o.congestion != "" {
+		out = append(out, "relay-congestion", o.congestion)
 	}
 	for _, l := range []struct {
 		name string

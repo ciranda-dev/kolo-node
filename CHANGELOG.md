@@ -5,6 +5,13 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `relay`: the listener the `-relay-max-conns`, `-relay-max-conns-per-ip`, window and congestion flags build offers QUIC datagrams, as kolo-relay's default listener does, so clients that opt in (`Transport.Datagrams` in kolo-relay's `Config.Relay`) carry relayed packets as datagrams; the relay offers them, clients use them only when they ask.
+- `relay`: `-relay-stream-window`, `-relay-conn-window` and `-relay-congestion` (and the same config file keys) set the listener's receive windows and congestion controller. 0 and empty keep kolo-relay's 64 KiB, 256 KiB and Reno; a value out of range, or a stream window above the connection window, exits with code 2 and names the flag.
+
 ## [0.1.0] - 2026-11-20
 
 ### Added

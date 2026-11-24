@@ -42,7 +42,7 @@ func TestRelayFlags(t *testing.T) {
 	tc := c.Secure.Transport
 	if tc.MaxConns != 300 || tc.MaxConnsPerIP != 12 || tc.MaxDialed != relayMaxDialed || tc.MaxIncomingStreams != relayMaxStreams ||
 		tc.MaxStreamReceiveWindow != relayStreamWindow || tc.MaxConnReceiveWindow != relayConnWindow || c.Secure.MaxPending != 0 ||
-		tc.MaxMemory != kolotransport.DefaultMaxMemory {
+		tc.MaxMemory != kolotransport.DefaultMaxMemory || !tc.Datagrams {
 		t.Fatalf("listener %+v", tc)
 	}
 	o, _ = parseRelay([]string{"-listen", "127.0.0.1:0", "-identity", "/k", "-relay-max-conns", "10000"}, io.Discard)
@@ -131,6 +131,140 @@ func TestRelayMaxConnsRange(t *testing.T) {
 				t.Fatalf("exit %d", code)
 			}
 		})
+	}
+}
+
+func relayOpts(t *testing.T, args ...string) relayOptions {
+	t.Helper()
+	o, err := parseRelay(append([]string{"-listen", "127.0.0.1:0", "-identity", "/k"}, args...), io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return o
+}
+
+func TestRelayListenerFlags(t *testing.T) {
+	const mib = 1 << 20
+	for _, tc := range []struct {
+		name         string
+		args         []string
+		conns        int
+		stream, conn int64
+		cc           string
+	}{
+		{"stream window", []string{"-relay-stream-window", "262144"}, relayMaxConns, 256 << 10, relayConnWindow, ""},
+		{"conn window", []string{"-relay-conn-window", "2097152"}, relayMaxConns, relayStreamWindow, 2 * mib, ""},
+		{"congestion", []string{"-relay-congestion", "bbr"}, relayMaxConns, relayStreamWindow, relayConnWindow, "bbr"},
+		{"both windows", []string{"-relay-stream-window", "1048576", "-relay-conn-window", "4194304"}, relayMaxConns, mib, 4 * mib, ""},
+		{"equal windows", []string{"-relay-stream-window", "65536", "-relay-conn-window", "65536"}, relayMaxConns, 64 << 10, 64 << 10, ""},
+		{"all", []string{"-relay-stream-window", "1048576", "-relay-conn-window", "4194304", "-relay-congestion", "cubic", "-relay-max-conns", "8", "-relay-max-conns-per-ip", "2"}, 8, mib, 4 * mib, "cubic"},
+		{"top of the range", []string{"-relay-stream-window", "16777216", "-relay-conn-window", "67108864", "-relay-max-conns", "100"}, 100, 16 * mib, 64 * mib, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o := relayOpts(t, tc.args...)
+			c := o.serverConfig()
+			if c.Secure == nil {
+				t.Fatal("no listener config")
+			}
+			tr := c.Secure.Transport
+			if tr.MaxStreamReceiveWindow != tc.stream || tr.MaxConnReceiveWindow != tc.conn || tr.CongestionControl != tc.cc || tr.MaxConns != tc.conns {
+				t.Fatalf("listener %+v", tr)
+			}
+			if want := max(kolotransport.DefaultMaxMemory, int64(tc.conns+relayMaxDialed)*tc.conn); tr.MaxMemory != want {
+				t.Fatalf("MaxMemory %d, want %d", tr.MaxMemory, want)
+			}
+			if tr.MaxDialed != relayMaxDialed || tr.MaxIncomingStreams != relayMaxStreams {
+				t.Fatalf("listener %+v", tr)
+			}
+		})
+	}
+	o := relayOpts(t, "-relay-stream-window", "0", "-relay-conn-window", "0", "-relay-congestion", "")
+	if o.serverConfig().Secure != nil || len(o.limitAttrs()) != 0 {
+		t.Fatal("zero values set a listener or a log attribute")
+	}
+}
+
+func TestRelayListenerConfigFile(t *testing.T) {
+	p := writeConfig(t, `{"listen": "127.0.0.1:0", "identity": "/k", "relay-stream-window": 1048576, "relay-conn-window": 4194304, "relay-congestion": "bbr"}`)
+	o, err := parseRelay([]string{"-config", p}, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr := o.serverConfig().Secure.Transport
+	if tr.MaxStreamReceiveWindow != 1<<20 || tr.MaxConnReceiveWindow != 4<<20 || tr.CongestionControl != "bbr" || !tr.Datagrams {
+		t.Fatalf("listener %+v", tr)
+	}
+	o, err = parseRelay([]string{"-config", p, "-relay-congestion", "cubic", "-relay-conn-window", "2097152"}, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tr := o.serverConfig().Secure.Transport; tr.CongestionControl != "cubic" || tr.MaxConnReceiveWindow != 2<<20 || tr.MaxStreamReceiveWindow != 1<<20 {
+		t.Fatalf("flags do not override the file: %+v", tr)
+	}
+	for _, bad := range []string{
+		`{"relay-congestion": 3}`, `{"relay-stream-window": "1MiB"}`, `{"relay-conn-window": null}`, `{"relay-conn-window": 1.5}`,
+	} {
+		if _, err := parseRelay([]string{"-config", writeConfig(t, bad)}, io.Discard); err == nil {
+			t.Errorf("%s accepted", bad)
+		}
+	}
+}
+
+func TestRelayListenerRefused(t *testing.T) {
+	for _, tc := range []struct {
+		flag string // the flag the error must name
+		args []string
+		leak string // a value the error must not show
+	}{
+		{"-relay-stream-window", []string{"-relay-stream-window", "-4242"}, "4242"},
+		{"-relay-conn-window", []string{"-relay-conn-window", "-4242"}, "4242"},
+		{"-relay-stream-window", []string{"-relay-stream-window", "42421"}, "42421"},
+		{"-relay-stream-window", []string{"-relay-stream-window", "16777217"}, "16777217"},
+		{"-relay-conn-window", []string{"-relay-conn-window", "42421"}, "42421"},
+		{"-relay-conn-window", []string{"-relay-conn-window", "67108865"}, "67108865"},
+		{"-relay-conn-window", []string{"-relay-stream-window", "524288"}, "524288"},
+		{"-relay-conn-window", []string{"-relay-stream-window", "1048576", "-relay-conn-window", "524288"}, "524288"},
+		{"-relay-congestion", []string{"-relay-congestion", "vegas7"}, "vegas7"},
+		{"-relay-congestion", []string{"-relay-congestion", "BBR"}, "BBR"},
+		{"-relay-conn-window", []string{"-relay-max-conns", "10000", "-relay-conn-window", "67108864"}, "67108864"},
+	} {
+		_, err := parseRelay(append([]string{"-listen", "127.0.0.1:0", "-identity", "/k"}, tc.args...), io.Discard)
+		var ue usageError
+		if !errors.As(err, &ue) {
+			t.Errorf("%v: %v, want a usage error", tc.args, err)
+			continue
+		}
+		if !strings.Contains(err.Error(), tc.flag) || strings.Contains(err.Error(), tc.leak) {
+			t.Errorf("%v: error %q must name %s and not show %s", tc.args, err, tc.flag, tc.leak)
+		}
+		var errOut strings.Builder
+		key := keyPath(t)
+		args := append([]string{"relay", "-listen", "127.0.0.1:0", "-identity", key}, tc.args...)
+		if code := Main(t.Context(), args, Env{Stdout: io.Discard, Stderr: &errOut}); code != ExitUsage {
+			t.Errorf("%v: exit %d, stderr %q", tc.args, code, errOut.String())
+		}
+		if _, err := os.Stat(key); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("%v: a key file was written for a refused config", tc.args)
+		}
+	}
+}
+
+func TestRelayListenerStarts(t *testing.T) {
+	checkGoroutines(t)
+	r, addr, key := startRelayCmd(t, "-relay-stream-window", "1048576", "-relay-conn-window", "4194304", "-relay-congestion", "bbr")
+	ev := r.log.wait(t, "started", nil, 5*time.Second)
+	if ev["relay-stream-window"] != float64(1<<20) || ev["relay-conn-window"] != float64(4<<20) || ev["relay-congestion"] != "bbr" {
+		t.Fatalf("started event %v", ev)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	res, err := kolorelay.Reserve(ctx, addr, key, newID(t), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Close()
+	if code := r.stop(t); code != ExitOK {
+		t.Fatalf("exit %d", code)
 	}
 }
 
