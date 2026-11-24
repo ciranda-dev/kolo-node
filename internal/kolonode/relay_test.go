@@ -48,14 +48,14 @@ func TestRelayFlags(t *testing.T) {
 		t.Fatalf("listener %+v", tc)
 	}
 	o, _ = parseRelay([]string{"-listen", "127.0.0.1:0", "-identity", "/k", "-relay-max-conns", "10000"}, io.Discard)
-	if tc := o.serverConfig().Secure.Transport; tc.MaxMemory != (10000+relayMaxDialed)*(relayConnWindow+relayDatagramQueues) {
+	if tc := o.serverConfig().Secure.Transport; tc.MaxMemory != (10000+relayMaxDialed)*(relayConnWindow+kolotransport.DatagramQueueBytes) {
 		t.Fatalf("MaxMemory %d for 10000 connections", tc.MaxMemory)
 	}
 	o, err = parseRelay([]string{"-listen", "127.0.0.1:0", "-identity", "/k", "-relay-max-conns", "100000"}, io.Discard)
 	if err != nil {
 		t.Fatalf("100000 connections: %v", err)
 	}
-	if tc := o.serverConfig().Secure.Transport; tc.MaxConns != 100000 || tc.MaxMemory != (100000+relayMaxDialed)*(relayConnWindow+relayDatagramQueues) {
+	if tc := o.serverConfig().Secure.Transport; tc.MaxConns != 100000 || tc.MaxMemory != (100000+relayMaxDialed)*(relayConnWindow+kolotransport.DatagramQueueBytes) {
 		t.Fatalf("listener for 100000 connections: %+v", tc)
 	}
 	o, err = parseRelay([]string{"-listen", "127.0.0.1:0", "-identity", "/k"}, io.Discard)
@@ -97,6 +97,8 @@ func TestRelayRanges(t *testing.T) {
 	for _, bad := range [][]string{
 		{"-relay-max-reservations", "-1"},
 		{"-relay-max-sessions", "10001"},
+		{"-relay-max-sessions", "129"},
+		{"-relay-max-conns", "20", "-relay-max-sessions", "21"},
 		{"-relay-max-sessions-per-peer", "17"},
 		{"-relay-max-sessions-per-target", "17"},
 		{"-relay-reservation-lifetime", "500ms"},
@@ -177,7 +179,7 @@ func TestRelayLogsReservations(t *testing.T) {
 }
 
 func TestRelayMaxConnsRange(t *testing.T) {
-	for _, n := range []string{"4096", "10000", "10001", "100000"} {
+	for _, n := range []string{"4096", "10000", "10001", "100000", "200000"} {
 		t.Run(n, func(t *testing.T) {
 			checkGoroutines(t)
 			r, addr, key := startRelayCmd(t, "-relay-max-conns", n)
@@ -195,16 +197,41 @@ func TestRelayMaxConnsRange(t *testing.T) {
 	}
 }
 
-// kolo-transport counts the datagram queues of every connection in MaxMemory, so the 64 GiB limit holds fewer connections.
-func TestRelayMaxConnsCountsDatagramQueues(t *testing.T) {
-	args := func(n string) []string {
-		return []string{"-listen", "127.0.0.1:0", "-identity", "/k", "-relay-max-conns", n}
+// kolo-transport has no maximum of MaxMemory, so only an int64 of windows and datagram queues bounds -relay-max-conns.
+func TestRelayMaxConnsHasNoMemoryLimit(t *testing.T) {
+	args := func(n int64) []string {
+		return []string{"-listen", "127.0.0.1:0", "-identity", "/k", "-relay-max-conns", strconv.FormatInt(n, 10)}
 	}
-	if _, err := parseRelay(args("135299"), io.Discard); err != nil {
-		t.Fatalf("135299 connections: %v", err)
+	for _, n := range []int64{135300, math.MaxInt32} {
+		o, err := parseRelay(args(n), io.Discard)
+		if err != nil {
+			t.Fatalf("%d connections: %v", n, err)
+		}
+		if tc := o.serverConfig().Secure.Transport; tc.MaxMemory != (n+relayMaxDialed)*(relayConnWindow+kolotransport.DatagramQueueBytes) {
+			t.Fatalf("%d connections: MaxMemory %d", n, tc.MaxMemory)
+		}
 	}
-	if _, err := parseRelay(args("135300"), io.Discard); err == nil {
-		t.Fatal("135300 connections accepted, want the 64 GiB limit")
+	if strconv.IntSize < 64 {
+		return
+	}
+	most := int64(math.MaxInt64)/(relayConnWindow+kolotransport.DatagramQueueBytes) - relayMaxDialed
+	if _, err := parseRelay(args(most), io.Discard); err != nil {
+		t.Fatalf("%d connections: %v", most, err)
+	}
+	if _, err := parseRelay(args(most+1), io.Discard); err == nil || !strings.Contains(err.Error(), "int64") {
+		t.Fatalf("%d connections: %v, want the int64 bound", most+1, err)
+	}
+}
+
+// kolo-relay's MaxSessions is at most the listener's MaxConns, with no maximum of its own.
+func TestRelayMaxSessionsFollowsMaxConns(t *testing.T) {
+	checkGoroutines(t)
+	r, _, _ := startRelayCmd(t, "-relay-max-conns", "20000", "-relay-max-sessions", "10001", "-relay-max-session-bytes", "9223372036854775807")
+	if ev := r.log.wait(t, "started", nil, 5*time.Second); ev["max_reservations"] != float64(4999) {
+		t.Fatalf("started event %v, want max_reservations (20000 - 10001) / 2 = 4999", ev)
+	}
+	if code := r.stop(t); code != ExitOK {
+		t.Fatalf("exit %d", code)
 	}
 }
 
@@ -244,7 +271,7 @@ func TestRelayListenerFlags(t *testing.T) {
 			if tr.MaxStreamReceiveWindow != tc.stream || tr.MaxConnReceiveWindow != tc.conn || tr.CongestionControl != tc.cc || tr.MaxConns != tc.conns {
 				t.Fatalf("listener %+v", tr)
 			}
-			if want := max(kolotransport.DefaultMaxMemory, int64(tc.conns+relayMaxDialed)*(tc.conn+relayDatagramQueues)); tr.MaxMemory != want {
+			if want := max(kolotransport.DefaultMaxMemory, int64(tc.conns+relayMaxDialed)*(tc.conn+kolotransport.DatagramQueueBytes)); tr.MaxMemory != want {
 				t.Fatalf("MaxMemory %d, want %d", tr.MaxMemory, want)
 			}
 			if tr.MaxDialed != relayMaxDialed || tr.MaxIncomingStreams != relayMaxStreams {
@@ -285,11 +312,12 @@ func TestRelayListenerConfigFile(t *testing.T) {
 }
 
 func TestRelayListenerRefused(t *testing.T) {
-	for _, tc := range []struct {
+	type refusal struct {
 		flag string // the flag the error must name
 		args []string
 		leak string // a value the error must not show
-	}{
+	}
+	cases := []refusal{
 		{"-relay-stream-window", []string{"-relay-stream-window", "-4242"}, "4242"},
 		{"-relay-conn-window", []string{"-relay-conn-window", "-4242"}, "4242"},
 		{"-relay-stream-window", []string{"-relay-stream-window", "42421"}, "42421"},
@@ -300,10 +328,11 @@ func TestRelayListenerRefused(t *testing.T) {
 		{"-relay-conn-window", []string{"-relay-stream-window", "1048576", "-relay-conn-window", "524288"}, "524288"},
 		{"-relay-congestion", []string{"-relay-congestion", "vegas7"}, "vegas7"},
 		{"-relay-congestion", []string{"-relay-congestion", "BBR"}, "BBR"},
-		{"-relay-conn-window", []string{"-relay-max-conns", "10000", "-relay-conn-window", "67108864"}, "67108864"},
-		{"-relay-max-conns", []string{"-relay-max-conns", "300000"}, "300000"},
-		{"-relay-max-conns", []string{"-relay-max-conns", strconv.Itoa(math.MaxInt)}, strconv.Itoa(math.MaxInt)},
-	} {
+	}
+	if strconv.IntSize == 64 {
+		cases = append(cases, refusal{"-relay-max-conns", []string{"-relay-max-conns", strconv.Itoa(math.MaxInt)}, strconv.Itoa(math.MaxInt)})
+	}
+	for _, tc := range cases {
 		_, err := parseRelay(append([]string{"-listen", "127.0.0.1:0", "-identity", "/k"}, tc.args...), io.Discard)
 		var ue usageError
 		if !errors.As(err, &ue) {
