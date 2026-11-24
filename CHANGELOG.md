@@ -9,6 +9,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed
 
+- `-relay-max-reservations` keeps its meaning with default 0, which now means kolo-relay's derived default, (`-relay-max-conns` - `-relay-max-sessions`) / 2, 56 at the defaults instead of 64, and any larger value is accepted (kolo-relay's maximum of 100000 is gone). Needs the kolo-relay release that carries the change.
+- `-bootstrap`, `-bootstrap-file`, `KOLO_BOOTSTRAP`, `check` addresses and `check -relay`, `-relay-file` and `KOLO_RELAYS` no longer stop at 16 entries; a list is the operator's own input. A name still yields at most 8 addresses and 64 addresses in all.
+
 - Breaking: with `-allow-file`, unlisted keys can no longer connect through the relay. `relay -allow-file` now sets kolo-relay's `AllowConnect` as well as `AllowReserve`, so only the listed keys may reserve and only the listed keys may connect; another key that asks to reach a listed key gets the answer of a key with no reservation (`kolorelay.ErrUnavailable`). Without `-allow-file` the relay is still open and logs the `open relay` warning; list the keys that must reach a member through the relay.
 
 ### Added

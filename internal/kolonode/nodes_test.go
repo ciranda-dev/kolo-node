@@ -45,19 +45,30 @@ func TestBootstrapFile(t *testing.T) {
 	}
 }
 
+func TestBootstrapEntriesHaveNoCount(t *testing.T) {
+	t.Setenv(envBootstrap, "")
+	var flagList, fileList []string
+	for i := range 100 {
+		e := fmt.Sprintf("203.0.113.%d:7447", i+1)
+		if i < 60 {
+			flagList = append(flagList, e)
+		}
+		if i >= 50 {
+			fileList = append(fileList, e)
+		}
+	}
+	args := []string{"-identity", "/k", "-bootstrap", strings.Join(flagList, ","), "-bootstrap-file", writeConfig(t, strings.Join(fileList, "\n"))}
+	if o, err := parseRun(args, io.Discard); err != nil || len(o.nodes) != 100 {
+		t.Fatalf("100 distinct entries over a flag and a file: %d entries, %v", len(o.nodes), err)
+	}
+}
+
 func TestBootstrapFileRefuses(t *testing.T) {
 	t.Setenv(envBootstrap, "")
 	dir := t.TempDir()
-	var lines []string
-	for i := range maxEntries + 1 {
-		lines = append(lines, fmt.Sprintf("203.0.113.%d:7447", i+1))
-	}
 	fits := "203.0.113.1:1\n" + strings.Repeat("#", maxConfigSize-len("203.0.113.1:1\n"))
 	if o, err := parseRun([]string{"-identity", "/k", "-bootstrap-file", writeConfig(t, fits)}, io.Discard); err != nil || len(o.nodes) != 1 {
 		t.Fatalf("a file of exactly %d bytes: %v, %v", maxConfigSize, o.nodes, err)
-	}
-	if _, err := parseRun([]string{"-identity", "/k", "-bootstrap-file", writeConfig(t, strings.Join(lines[:maxEntries], "\n"))}, io.Discard); err != nil {
-		t.Fatalf("%d entries: %v", maxEntries, err)
 	}
 	for name, tc := range map[string]struct{ content, path, want string }{
 		"IPv6":        {content: "203.0.113.1:1\n[2001:db8::1]:7447\n", want: "line 2: an IPv6 address is refused"},
@@ -65,7 +76,6 @@ func TestBootstrapFileRefuses(t *testing.T) {
 		"bad port":    {content: "# c\n203.0.113.1:0\n", want: "line 2: port"},
 		"two a line":  {content: "203.0.113.1:1 203.0.113.2:2\n", want: "line 1"},
 		"content":     {content: "SECRETVALUE\n", want: "line 1"},
-		"count":       {content: strings.Join(lines, "\n"), want: "more than 16 bootstrap entries in all"},
 		"size":        {content: fits + "#", want: "larger than 65536 bytes"},
 		"directory":   {path: dir, want: "-bootstrap-file " + dir + ": not a regular file"},
 		"missing":     {path: filepath.Join(dir, "none.txt"), want: filepath.Join(dir, "none.txt")},

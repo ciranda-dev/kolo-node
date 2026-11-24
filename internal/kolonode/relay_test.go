@@ -86,7 +86,7 @@ func TestRelayUsage(t *testing.T) {
 
 func TestRelayRanges(t *testing.T) {
 	for _, bad := range [][]string{
-		{"-relay-max-reservations", "100001"},
+		{"-relay-max-reservations", "-1"},
 		{"-relay-max-sessions", "10001"},
 		{"-relay-max-sessions-per-peer", "17"},
 		{"-relay-max-sessions-per-target", "17"},
@@ -112,6 +112,30 @@ func TestRelayRanges(t *testing.T) {
 		if _, err := os.Stat(key); !errors.Is(err, os.ErrNotExist) {
 			t.Errorf("%v: a key file was written for a refused config", bad)
 		}
+	}
+}
+
+func TestRelayReservationsFollowMaxConns(t *testing.T) {
+	checkGoroutines(t)
+	r, addr, key := startRelayCmd(t, "-relay-max-conns", "20", "-relay-max-conns-per-ip", "20", "-relay-max-sessions", "4")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	var held []*kolorelay.Reservation
+	for range 8 {
+		res, err := kolorelay.Reserve(ctx, addr, key, newID(t), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		held = append(held, res)
+	}
+	if _, err := kolorelay.Reserve(ctx, addr, key, newID(t), nil); !errors.Is(err, kolorelay.ErrLimit) {
+		t.Fatalf("ninth key: %v, want ErrLimit at (20 - 4) / 2 = 8", err)
+	}
+	for _, res := range held {
+		res.Close()
+	}
+	if code := r.stop(t); code != ExitOK {
+		t.Fatalf("exit %d", code)
 	}
 }
 
@@ -569,14 +593,11 @@ func TestCheckRelayLists(t *testing.T) {
 		t.Fatalf("flags then file without duplicates: %v, %v", got, err)
 	}
 	var many []string
-	for i := range maxEntries + 1 {
+	for i := range 40 {
 		many = append(many, entry(i))
 	}
-	if got, err := loadRelays(many[:maxEntries], nil, true); err != nil || len(got) != maxEntries {
-		t.Fatalf("%d relays: %v", maxEntries, err)
-	}
-	if _, err := loadRelays(many[:8], []string{writeConfig(t, strings.Join(many[8:], "\n"))}, true); err == nil {
-		t.Fatalf("%d relays over flags and a file were accepted", maxEntries+1)
+	if got, err := loadRelays(many[:20], []string{writeConfig(t, strings.Join(many[20:], "\n"))}, true); err != nil || len(got) != len(many) {
+		t.Fatalf("%d relays over flags and a file: %d, %v", len(many), len(got), err)
 	}
 	for _, bad := range []string{
 		"127.0.0.1:1", "127.0.0.1:1@" + k(0)[:62], "[::1]:1@" + k(0), "[::ffff:127.0.0.1]:1@" + k(0), "127.0.0.1:0@" + k(0),

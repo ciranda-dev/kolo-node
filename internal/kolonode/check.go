@@ -50,8 +50,8 @@ func check(ctx context.Context, args []string, env Env) int {
 		fmt.Fprintln(env.Stderr, err)
 		return ExitUsage
 	}
-	if fs.NArg() > maxEntries || fs.NArg() == 0 && len(rs) == 0 {
-		fmt.Fprintf(env.Stderr, "kolonode: check takes 1 to %d addresses, or relays from -relay, -relay-file or %s\n", maxEntries, envRelays)
+	if fs.NArg() == 0 && len(rs) == 0 {
+		fmt.Fprintf(env.Stderr, "kolonode: check takes addresses, or relays from -relay, -relay-file or %s\n", envRelays)
 		return ExitUsage
 	}
 	entries := make([]entry, fs.NArg())
