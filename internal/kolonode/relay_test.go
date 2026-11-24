@@ -268,6 +268,122 @@ func TestRelayListenerStarts(t *testing.T) {
 	}
 }
 
+func TestRelayAllowConnect(t *testing.T) {
+	k1, k2 := newID(t).PublicKey(), newID(t).PublicKey()
+	p := writeConfig(t, hex.EncodeToString(k1)+"\n"+hex.EncodeToString(k2)+"\n")
+	o, err := parseRelay([]string{"-listen", "127.0.0.1:0", "-identity", "/k", "-allow-file", p}, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := o.serverConfig()
+	if c.AllowConnect == nil {
+		t.Fatal("-allow-file left AllowConnect unset")
+	}
+	stranger := newID(t).PublicKey()
+	if !c.AllowConnect(k1, k2) || !c.AllowConnect(k2, k1) || !c.AllowConnect(k1, stranger) {
+		t.Fatal("a listed key was refused")
+	}
+	if c.AllowConnect(stranger, k1) || c.AllowConnect(k1[:31], k2) || c.AllowConnect(nil, k2) {
+		t.Fatal("an unlisted or malformed key was allowed")
+	}
+	if !c.AllowReserve(k1) || c.AllowReserve(stranger) {
+		t.Fatal("reserve list")
+	}
+	o, err = parseRelay([]string{"-listen", "127.0.0.1:0", "-identity", "/k"}, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := o.serverConfig(); c.AllowReserve != nil || c.AllowConnect != nil {
+		t.Fatal("a relay without -allow-file set an allow hook")
+	}
+}
+
+func TestRelayAllowConnectThroughCommand(t *testing.T) {
+	checkGoroutines(t)
+	a, b, c := newID(t), newID(t), newID(t)
+	list := hex.EncodeToString(a.PublicKey()) + "\n" + hex.EncodeToString(b.PublicKey()) + "\n" + hex.EncodeToString(c.PublicKey()) + "\n"
+	r, addr, key := startRelayCmd(t, "-allow-file", writeConfig(t, list))
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	var asked atomic.Int32
+	res, err := kolorelay.Reserve(ctx, addr, key, a, &kolorelay.Config{AllowFunc: func(ed25519.PublicKey) bool {
+		asked.Add(1)
+		return true
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Close()
+	done := make(chan error, 1)
+	go func() {
+		conn, err := res.Accept(ctx)
+		if err != nil {
+			done <- err
+			return
+		}
+		st, err := conn.AcceptStream(ctx)
+		if err == nil {
+			_, err = io.Copy(st, st)
+			st.Close()
+		}
+		done <- err
+	}()
+	if conn, err := kolorelay.Dial(ctx, addr, key, newID(t), a.PublicKey(), nil); !errors.Is(err, kolorelay.ErrUnavailable) {
+		if err == nil {
+			conn.Close()
+		}
+		t.Fatalf("an unlisted key dialing a listed key: %v, want ErrUnavailable", err)
+	}
+	if n := asked.Load(); n != 0 {
+		t.Fatalf("the relay announced an unlisted key to the member (%d calls)", n)
+	}
+	if conn, err := kolorelay.Dial(ctx, addr, key, b, c.PublicKey(), nil); !errors.Is(err, kolorelay.ErrUnavailable) {
+		if err == nil {
+			conn.Close()
+		}
+		t.Fatalf("a listed key dialing a listed key with no reservation: %v, want ErrUnavailable", err)
+	}
+	conn, err := kolorelay.Dial(ctx, addr, key, b, a.PublicKey(), nil)
+	if err != nil {
+		t.Fatalf("a listed key dialing a listed key: %v", err)
+	}
+	defer conn.Close()
+	st, err := conn.OpenStream(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.Write([]byte("hello member"))
+	st.Close()
+	if got, err := io.ReadAll(st); err != nil || string(got) != "hello member" {
+		t.Fatalf("echo through the relay command: %q, %v", got, err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if n := asked.Load(); n != 1 {
+		t.Fatalf("the member was asked %d times, want 1", n)
+	}
+	conn.Close()
+	res.Close()
+	if code := r.stop(t); code != ExitOK {
+		t.Fatalf("exit %d", code)
+	}
+}
+
+func TestCheckClosedRelay(t *testing.T) {
+	checkGoroutines(t)
+	t.Setenv(envRelays, "")
+	r, addr, key := startRelayCmd(t, "-allow-file", writeConfig(t, hex.EncodeToString(newID(t).PublicKey())+"\n"))
+	arg := relayArg(addr, key)
+	var out, errOut strings.Builder
+	if code := Main(t.Context(), []string{"check", "-timeout", "10s", "-relay", arg}, Env{Stdout: &out, Stderr: &errOut}); code != ExitOK || out.String() != "ok relay "+arg+"\n" {
+		t.Fatalf("check of a relay with -allow-file: exit %d, stdout %q, stderr %q", code, out.String(), errOut.String())
+	}
+	if code := r.stop(t); code != ExitOK {
+		t.Fatalf("exit %d", code)
+	}
+}
+
 func TestRelayAllowFile(t *testing.T) {
 	k1, k2 := newID(t).PublicKey(), newID(t).PublicKey()
 	p := writeConfig(t, "\ufeff# members\r\n"+hex.EncodeToString(k1)+"\r\n\n  "+strings.ToUpper(hex.EncodeToString(k2))+"  # second\n")
