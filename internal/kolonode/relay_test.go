@@ -8,9 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -48,6 +50,13 @@ func TestRelayFlags(t *testing.T) {
 	o, _ = parseRelay([]string{"-listen", "127.0.0.1:0", "-identity", "/k", "-relay-max-conns", "10000"}, io.Discard)
 	if tc := o.serverConfig().Secure.Transport; tc.MaxMemory != (10000+relayMaxDialed)*relayConnWindow {
 		t.Fatalf("MaxMemory %d for 10000 connections", tc.MaxMemory)
+	}
+	o, err = parseRelay([]string{"-listen", "127.0.0.1:0", "-identity", "/k", "-relay-max-conns", "100000"}, io.Discard)
+	if err != nil {
+		t.Fatalf("100000 connections: %v", err)
+	}
+	if tc := o.serverConfig().Secure.Transport; tc.MaxConns != 100000 || tc.MaxMemory != (100000+relayMaxDialed)*relayConnWindow {
+		t.Fatalf("listener for 100000 connections: %+v", tc)
 	}
 	o, err = parseRelay([]string{"-listen", "127.0.0.1:0", "-identity", "/k"}, io.Discard)
 	if err != nil {
@@ -100,13 +109,16 @@ func TestRelayRanges(t *testing.T) {
 		{"-relay-rate-bytes", "1024"},
 		{"-relay-rate-burst", "1024"},
 		{"-relay-flush-interval", "1s"},
-		{"-relay-max-conns", "10001"},
 		{"-relay-max-conns", "8", "-relay-max-conns-per-ip", "9"},
 	} {
 		key := keyPath(t)
 		var errOut strings.Builder
 		args := append([]string{"relay", "-listen", "127.0.0.1:0", "-identity", key}, bad...)
-		if code := Main(t.Context(), args, Env{Stdout: io.Discard, Stderr: &errOut}); code != ExitUsage {
+		// A refusal that does not come would otherwise start a relay that runs until the test binary times out.
+		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+		code := Main(ctx, args, Env{Stdout: io.Discard, Stderr: &errOut})
+		cancel()
+		if code != ExitUsage {
 			t.Errorf("%v: exit %d, stderr %q", bad, code, errOut.String())
 		}
 		if _, err := os.Stat(key); !errors.Is(err, os.ErrNotExist) {
@@ -140,7 +152,7 @@ func TestRelayReservationsFollowMaxConns(t *testing.T) {
 }
 
 func TestRelayMaxConnsRange(t *testing.T) {
-	for _, n := range []string{"4096", "10000"} {
+	for _, n := range []string{"4096", "10000", "10001", "100000"} {
 		t.Run(n, func(t *testing.T) {
 			checkGoroutines(t)
 			r, addr, key := startRelayCmd(t, "-relay-max-conns", n)
@@ -251,6 +263,8 @@ func TestRelayListenerRefused(t *testing.T) {
 		{"-relay-congestion", []string{"-relay-congestion", "vegas7"}, "vegas7"},
 		{"-relay-congestion", []string{"-relay-congestion", "BBR"}, "BBR"},
 		{"-relay-conn-window", []string{"-relay-max-conns", "10000", "-relay-conn-window", "67108864"}, "67108864"},
+		{"-relay-max-conns", []string{"-relay-max-conns", "300000"}, "300000"},
+		{"-relay-max-conns", []string{"-relay-max-conns", strconv.Itoa(math.MaxInt)}, strconv.Itoa(math.MaxInt)},
 	} {
 		_, err := parseRelay(append([]string{"-listen", "127.0.0.1:0", "-identity", "/k"}, tc.args...), io.Discard)
 		var ue usageError
@@ -264,7 +278,10 @@ func TestRelayListenerRefused(t *testing.T) {
 		var errOut strings.Builder
 		key := keyPath(t)
 		args := append([]string{"relay", "-listen", "127.0.0.1:0", "-identity", key}, tc.args...)
-		if code := Main(t.Context(), args, Env{Stdout: io.Discard, Stderr: &errOut}); code != ExitUsage {
+		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+		code := Main(ctx, args, Env{Stdout: io.Discard, Stderr: &errOut})
+		cancel()
+		if code != ExitUsage {
 			t.Errorf("%v: exit %d, stderr %q", tc.args, code, errOut.String())
 		}
 		if _, err := os.Stat(key); !errors.Is(err, os.ErrNotExist) {
